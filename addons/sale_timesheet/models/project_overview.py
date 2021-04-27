@@ -3,6 +3,7 @@ import babel.dates
 from dateutil.relativedelta import relativedelta
 import itertools
 import json
+from odoo.osv import expression
 
 from odoo import fields, _, models
 from odoo.osv import expression
@@ -20,12 +21,25 @@ class Project(models.Model):
 
     def _qweb_prepare_qcontext(self, view_id, domain):
         values = super()._qweb_prepare_qcontext(view_id, domain)
-
+        project_ids = self.env.context.get('active_ids')
+        if project_ids:
+            domain = expression.AND([[('id', 'in', project_ids)], domain])
         projects = self.search(domain)
         values.update(projects._plan_prepare_values())
         values['actions'] = projects._plan_prepare_actions(values)
 
         return values
+
+    def _plan_get_employee_ids(self):
+        user_ids = self.env['project.task'].sudo().read_group([('project_id', 'in', self.ids), ('user_id', '!=', False)], ['user_id'], ['user_id'])
+        user_ids = [user_id['user_id'][0] for user_id in user_ids]
+        employee_ids = self.env['res.users'].sudo().search_read([('id', 'in', user_ids)], ['employee_ids'])
+        # flatten the list of list
+        employee_ids = list(itertools.chain.from_iterable([employee_id['employee_ids'] for employee_id in employee_ids]))
+
+        aal_employee_ids = self.env['account.analytic.line'].read_group([('project_id', 'in', self.ids), ('employee_id', '!=', False)], ['employee_id'], ['employee_id'])
+        employee_ids.extend(list(map(lambda x: x['employee_id'][0], aal_employee_ids)))
+        return employee_ids
 
     def _plan_prepare_values(self):
         currency = self.env.company.currency_id
@@ -104,6 +118,7 @@ class Project(models.Model):
             profit['expense_cost'] += data.get('expense_cost', 0.0)
             profit['expense_amount_untaxed_invoiced'] += data.get('expense_amount_untaxed_invoiced', 0.0)
         profit['other_revenues'] = other_revenues - data.get('amount_untaxed_invoiced', 0.0) if other_revenues else 0.0
+        profit['other_revenues'] = profit['other_revenues'] - data.get('expense_amount_untaxed_invoiced', 0.0) if profit['other_revenues'] else 0.0
         profit['total'] = sum([profit[item] for item in profit.keys()])
         dashboard_values['profit'] = profit
 
@@ -112,15 +127,8 @@ class Project(models.Model):
         #
         # Time Repartition (per employee per billable types)
         #
-        user_ids = self.env['project.task'].sudo().read_group([('project_id', 'in', self.ids), ('user_id', '!=', False)], ['user_id'], ['user_id'])
-        user_ids = [user_id['user_id'][0] for user_id in user_ids]
-        employee_ids = self.env['res.users'].sudo().search_read([('id', 'in', user_ids)], ['employee_ids'])
-        # flatten the list of list
-        employee_ids = list(itertools.chain.from_iterable([employee_id['employee_ids'] for employee_id in employee_ids]))
-
-        aal_employee_ids = self.env['account.analytic.line'].read_group([('project_id', 'in', self.ids), ('employee_id', '!=', False)], ['employee_id'], ['employee_id'])
-        employee_ids.extend(list(map(lambda x: x['employee_id'][0], aal_employee_ids)))
-
+        employee_ids = self._plan_get_employee_ids()
+        employee_ids = list(set(employee_ids))
         # Retrieve the employees for which the current user can see theirs timesheets
         employee_domain = expression.AND([[('company_id', 'in', self.env.companies.ids)], self.env['account.analytic.line']._domain_employee_id()])
         employees = self.env['hr.employee'].sudo().browse(employee_ids).filtered_domain(employee_domain)

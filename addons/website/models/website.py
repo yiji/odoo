@@ -160,6 +160,17 @@ class Website(models.Model):
     def _get_menu_ids(self):
         return self.env['website.menu'].search([('website_id', '=', self.id)]).ids
 
+    def _bootstrap_snippet_filters(self):
+        ir_filter = self.env.ref('website.dynamic_snippet_country_filter', raise_if_not_found=False)
+        if ir_filter:
+            self.env['website.snippet.filter'].create({
+                'field_names': 'name,code,image_url:image,phone_code:char',
+                'filter_id': ir_filter.id,
+                'limit': 16,
+                'name': _('Countries'),
+                'website_id': self.id,
+            })
+
     @api.model
     def create(self, vals):
         self._handle_favicon(vals)
@@ -170,6 +181,7 @@ class Website(models.Model):
 
         res = super(Website, self).create(vals)
         res._bootstrap_homepage()
+        res._bootstrap_snippet_filters()
 
         if not self.env.user.has_group('website.group_multi_website') and self.search_count([]) > 1:
             all_user_groups = 'base.group_portal,base.group_user,base.group_public'
@@ -196,7 +208,13 @@ class Website(models.Model):
             self.env['ir.qweb'].clear_caches()
 
         if 'cookies_bar' in values:
-            if values['cookies_bar']:
+            existing_policy_page = self.env['website.page'].search([
+                ('website_id', '=', self.id),
+                ('url', '=', '/cookie-policy'),
+            ])
+            if not values['cookies_bar']:
+                existing_policy_page.unlink()
+            elif not existing_policy_page:
                 cookies_view = self.env.ref('website.cookie_policy', raise_if_not_found=False)
                 if cookies_view:
                     cookies_view.with_context(website_id=self.id).write({'website_id': self.id})
@@ -208,11 +226,6 @@ class Website(models.Model):
                         'website_id': self.id,
                         'view_id': specific_cook_view.id,
                     })
-            else:
-                self.env['website.page'].search([
-                    ('website_id', '=', self.id),
-                    ('url', '=', '/cookie-policy'),
-                ]).unlink()
 
         return result
 

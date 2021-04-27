@@ -155,10 +155,10 @@
                     <field name="amount_currency" groups="base.group_multi_currency" optional="hide"/>
                     <field name="tax_tag_ids" widget="many2many_tags" width="0.5" optional="hide"/>
                     <field name="matching_number" optional="show"/>
+                    <field name="currency_id" readonly="1" groups="base.group_multi_currency" optional="hide" string="Original Currency"/>
                     <field name="reconcile_model_id" invisible="1"/>
                     <field name="reconciled" invisible="1"/>
                     <field name="date_maturity" optional="hide"/>
-                    <field name="currency_id" readonly="1" invisible="1"/>
                     <field name="company_currency_id" invisible="1"/>
                     <field name="parent_state" invisible="1"/>
                 </tree>
@@ -191,7 +191,7 @@
                     <field name="credit" sum="Total Credit" readonly="1"/>
                     <field name="balance" sum="Total Balance" readonly="1" optional="hide"/>
                     <field name="amount_currency" readonly="1" groups="base.group_multi_currency"/>
-                    <field name="currency_id" readonly="1" invisible="1" />
+                    <field name="currency_id" readonly="1" groups="base.group_multi_currency" optional="hide" string="Original Currency"/>
                     <field name="company_currency_id" invisible="1"/>
                     <field name="parent_state" invisible="1"/>
                     <field name="tax_ids" widget="many2many_tags" width="0.5" optional="hide" readonly="1"/>
@@ -529,13 +529,11 @@
                                 type="object"
                                 string="Send &amp; Print"
                                 attrs="{'invisible':['|', '|', ('state', '!=', 'posted'), ('is_move_sent', '=', True), ('move_type', 'not in', ('out_invoice', 'out_refund'))]}"
-                                class="oe_highlight"
-                                groups="account.group_account_invoice"/>
+                                class="oe_highlight"/>
                         <button name="action_invoice_sent"
                                 type="object"
                                 string="Send &amp; Print"
-                                attrs="{'invisible':['|', '|', ('state', '!=', 'posted'), ('is_move_sent', '=', False), ('move_type', 'not in', ('out_invoice', 'out_refund', 'in_invoice', 'in_refund'))]}"
-                                groups="account.group_account_invoice"/>
+                                attrs="{'invisible':['|', '|', ('state', '!=', 'posted'), ('is_move_sent', '=', False), ('move_type', 'not in', ('out_invoice', 'out_refund', 'in_invoice', 'in_refund'))]}"/>
                         <!-- Register Payment (only invoices / receipts) -->
                         <button name="action_register_payment" id="account_invoice_payment_btn"
                                 type="object" class="oe_highlight"
@@ -997,7 +995,7 @@
                                                 string="Cut-Off"
                                                 aria-label="Change Period"
                                                 class="float-right"
-                                                attrs="{'invisible': [('account_internal_group', 'not in', ('income', 'expense'))], 'column_invisible': [('parent.move_type', '=', 'entry')]}"
+                                                attrs="{'invisible': [('account_internal_group', 'not in', ('income', 'expense'))], 'column_invisible': ['|', ('parent.move_type', '=', 'entry'), ('parent.state', '!=', 'posted')]}"
                                                 context="{'hide_automatic_options': 1, 'default_action': 'change_period'}"/>
 
                                         <!-- Others fields -->

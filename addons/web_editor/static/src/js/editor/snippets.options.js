@@ -82,17 +82,25 @@ function _buildTitleElement(title) {
  * @param {string} src
  * @returns {HTMLElement}
  */
+const _buildImgElementCache = {};
 async function _buildImgElement(src) {
-    if (src.split('.').pop() === 'svg') {
-        const response = await window.fetch(src);
-        const text = await response.text();
-        const parser = new window.DOMParser();
-        const xmlDoc = parser.parseFromString(text, 'text/xml');
-        return xmlDoc.getElementsByTagName('svg')[0];
+    if (!(src in _buildImgElementCache)) {
+        _buildImgElementCache[src] = (async () => {
+            if (src.split('.').pop() === 'svg') {
+                const response = await window.fetch(src);
+                const text = await response.text();
+                const parser = new window.DOMParser();
+                const xmlDoc = parser.parseFromString(text, 'text/xml');
+                return xmlDoc.getElementsByTagName('svg')[0];
+            } else {
+                const imgEl = document.createElement('img');
+                imgEl.src = src;
+                return imgEl;
+            }
+        })();
     }
-    const imgEl = document.createElement('img');
-    imgEl.src = src;
-    return imgEl;
+    const node = await _buildImgElementCache[src];
+    return node.cloneNode(true);
 }
 /**
  * Build the correct DOM for a we-row element.
@@ -868,7 +876,9 @@ const SelectUserValueWidget = BaseSelectionUserValueWidget.extend({
      */
     close: function () {
         this._super(...arguments);
-        this.menuTogglerEl.classList.remove('active');
+        if (this.menuTogglerEl) {
+            this.menuTogglerEl.classList.remove('active');
+        }
     },
     /**
      * @override
@@ -1231,8 +1241,12 @@ const ColorpickerUserValueWidget = SelectUserValueWidget.extend({
         const _super = this._super.bind(this);
         const args = arguments;
 
-        // Pre-instanciate the color palette widget
-        await this._renderColorPalette();
+        // TODO review in master, this was done in stable to keep the speed fix
+        // as stable as possible (to have a reference to a widget even if not a
+        // colorPalette widget).
+        this.colorPalette = new Widget(this);
+        this.colorPalette.getColorNames = () => [];
+        await this.colorPalette.appendTo(document.createDocumentFragment());
 
         // Build the select element with a custom span to hold the color preview
         this.colorPreviewEl = document.createElement('span');
@@ -1247,6 +1261,22 @@ const ColorpickerUserValueWidget = SelectUserValueWidget.extend({
     // Public
     //--------------------------------------------------------------------------
 
+    /**
+     * @override
+     */
+    open: function () {
+        if (this.colorPalette.setSelectedColor) {
+            this.colorPalette.setSelectedColor(this._value);
+        } else {
+            // TODO review in master, this does async stuff. Maybe the open
+            // method should now be async. This is not really robust as the
+            // colorPalette can be used without it to be fully rendered but
+            // the use of the saved promise where we can should mitigate that
+            // issue.
+            this._colorPaletteRenderPromise = this._renderColorPalette();
+        }
+        this._super(...arguments);
+    },
     /**
      * @override
      */
@@ -1310,7 +1340,7 @@ const ColorpickerUserValueWidget = SelectUserValueWidget.extend({
     async setValue(color) {
         await this._super(...arguments);
 
-        await this._renderColorPalette();
+        await this._colorPaletteRenderPromise;
 
         const classes = weUtils.computeColorClasses(this.colorPalette.getColorNames());
         this.colorPreviewEl.classList.remove(...classes);
@@ -1565,7 +1595,7 @@ const DatetimePickerUserValueWidget = InputUserValueWidget.extend({
         this.inputEl.setAttribute('data-target', '#' + datetimePickerId);
 
         const datepickersOptions = {
-            minDate: moment({ y: 1 }),
+            minDate: moment({ y: 1000 }),
             maxDate: moment().add(200, 'y'),
             calendarWeeks: true,
             defaultDate: moment().format(),
@@ -2761,6 +2791,12 @@ const SnippetOptionWidget = Widget.extend({
         // Ask a mutexed snippet update according to the widget value change
         const shouldRecordUndo = (!previewMode && !ev.data.isSimulatedEvent);
         this.trigger_up('snippet_edition_request', {exec: async () => {
+            // If some previous snippet edition in the mutex removed the target from
+            // the DOM, the widget can be destroyed, in that case the edition request
+            // is now useless and can be discarded.
+            if (this.isDestroyed()) {
+                return;
+            }
             // Filter actions that are counterbalanced by earlier/later actions
             const actionQueue = this._actionQueues.get(widget).filter(({previewMode}, i, actions) => {
                 const prev = actions[i - 1];
@@ -3192,11 +3228,7 @@ const ImageHandlerOption = SnippetOptionWidget.extend({
      * @override
      */
     _computeVisibility() {
-        const img = this._getImg();
-        if (!['image/jpeg', 'image/png'].includes(img.dataset.mimetype)) {
-            return false;
-        }
-        const src = img.getAttribute('src');
+        const src = this._getImg().getAttribute('src');
         return src && src !== '/';
     },
     /**
@@ -3237,23 +3269,35 @@ const ImageHandlerOption = SnippetOptionWidget.extend({
      * @override
      */
     async _renderCustomXML(uiFragment) {
-        if (!this.originalSrc) {
+        const isLocalURL = href => new URL(href, window.location.origin).origin === window.location.origin;
+
+        const img = this._getImg();
+        if (!this.originalSrc || !['image/png', 'image/jpeg'].includes(img.dataset.mimetype)) {
             return [...uiFragment.childNodes].forEach(node => {
                 if (node.matches('.o_we_external_warning')) {
                     node.classList.remove('d-none');
+                    if (isLocalURL(img.getAttribute('src'))) {
+                        const title = node.querySelector('we-title');
+                        title.textContent = ` ${_t("Quality options unavailable")}`;
+                        $(title).prepend('<i class="fa fa-warning" />');
+                        if (img.dataset.mimetype) {
+                            title.setAttribute('title', _t("Only PNG and JPEG images support quality options and image filtering"));
+                        } else {
+                            title.setAttribute('title', _t("Due to technical limitations, you can only change optimization settings on this image by choosing it again in the media-dialog or reuploading it (double click on the image)"));
+                        }
+                    }
                 } else {
                     node.remove();
                 }
             });
         }
-        const img = this._getImg();
         const $select = $(uiFragment).find('we-select[data-name=width_select_opt]');
         (await this._computeAvailableWidths()).forEach(([value, label]) => {
             $select.append(`<we-button data-select-width="${value}">${label}</we-button>`);
         });
-        const qualityRange = uiFragment.querySelector('we-range');
+
         if (img.dataset.mimetype !== 'image/jpeg') {
-            qualityRange.remove();
+            uiFragment.querySelector('we-range[data-set-quality]').remove();
         }
     },
     /**
@@ -3299,7 +3343,9 @@ const ImageHandlerOption = SnippetOptionWidget.extend({
         $weight.find('b').text(`${(weight / 1024).toFixed(1)} kb`);
         $weight.removeClass('d-none');
         img.classList.add('o_modified_image_to_save');
-        return loadImage(dataURL, img);
+        const loadedImg = await loadImage(dataURL, img);
+        this._applyImage(loadedImg);
+        return loadedImg;
     },
     /**
      * Loads the image's attachment info.
@@ -3345,6 +3391,14 @@ const ImageHandlerOption = SnippetOptionWidget.extend({
      * @returns {Int} the maximum width at which the image can be displayed
      */
     _computeMaxDisplayWidth() {},
+    /**
+     * Use the processed image when it's needed in the DOM.
+     *
+     * @private
+     * @abstract
+     * @param {HTMLImageElement} img
+     */
+    _applyImage(img) {},
 });
 
 /**
@@ -3476,26 +3530,28 @@ registry.BackgroundOptimize = ImageHandlerOption.extend({
         return 1920;
     },
     /**
-     * @override
-     */
-    async _applyOptions() {
-        await this._super(...arguments);
-        this.$target.css('background-image', `url('${this._getImg().getAttribute('src')}')`);
-    },
-    /**
      * Initializes this.img to an image with the background image url as src.
      *
      * @override
      */
     async _loadImageInfo() {
         this.img = new Image();
-        Object.entries(this.$target[0].dataset).forEach(([key, value]) => {
+        Object.entries(this.$target[0].dataset).filter(([key]) =>
+            // Avoid copying dynamic editor attributes
+            !['oeId','oeModel', 'oeField', 'oeXpath', 'noteId'].includes(key)
+        ).forEach(([key, value]) => {
             this.img.dataset[key] = value;
         });
         const src = getBgImageURL(this.$target[0]);
         // Don't set the src if not relative (ie, not local image: cannot be modified)
         this.img.src = src.startsWith('/') ? src : '';
         return await this._super(...arguments);
+    },
+    /**
+     * @override
+     */
+    _applyImage(img) {
+        this.$target.css('background-image', `url('${img.getAttribute('src')}')`);
     },
 
     //--------------------------------------------------------------------------
@@ -3995,6 +4051,7 @@ registry.BackgroundShape = SnippetOptionWidget.extend({
         } else {
             // Remove custom bg image and let the shape class set the bg shape
             $(shapeContainer).css('background-image', '');
+            $(shapeContainer).css('background-position', '');
         }
         if (previewMode === false) {
             this.prevShapeContainer = shapeContainer.cloneNode(true);
@@ -4296,6 +4353,8 @@ registry.BackgroundPosition = SnippetOptionWidget.extend({
 
         // Create empty clone of $target with same display size, make it draggable and give it a tooltip.
         this.$bgDragger = this.$target.clone().empty();
+        // Prevent clone from being seen as editor if target is editor (eg. background on root tag)
+        this.$bgDragger.removeClass('o_editable');
         // Some CSS child selector rules will not be applied since the clone has a different container from $target.
         // The background-attachment property should be the same in both $target & $bgDragger, this will keep the
         // preview more "wysiwyg" instead of getting different result when bg position saved (e.g. parallax snippet)
@@ -4409,7 +4468,7 @@ registry.BackgroundPosition = SnippetOptionWidget.extend({
      * @private
      */
     _onDocumentClicked: function (ev) {
-        if (!ev.target.closest('.o_we_background_position_overlay')) {
+        if (!$(ev.target).closest('.o_we_background_position_overlay')) {
             this._toggleBgOverlay(false);
         }
     },
@@ -4607,7 +4666,7 @@ registry.many2one = SnippetOptionWidget.extend({
                     });
                 });
         } else {
-            self.$target.html($li.data('name'));
+            self.$target.text($li.data('name'));
         }
 
         this._clear();
@@ -4689,6 +4748,10 @@ registry.SnippetSave = SnippetOptionWidget.extend({
                             key: snippetKey,
                             onSuccess: url => thumbnailURL = url,
                         });
+                        let context;
+                        this.trigger_up('context_get', {
+                            callback: ctx => context = ctx,
+                        });
                         this.trigger_up('request_save', {
                             reloadEditor: true,
                             onSuccess: async () => {
@@ -4708,6 +4771,7 @@ registry.SnippetSave = SnippetOptionWidget.extend({
                                         'template_key': this.options.snippets,
                                         'snippet_key': snippetKey,
                                         'thumbnail_url': thumbnailURL,
+                                        'context': context,
                                     },
                                 });
                             },

@@ -212,7 +212,7 @@ class Website(Home):
         try:
             request.website.get_template('website.website_info').name
         except Exception as e:
-            return request.env['ir.http']._handle_exception(e, 404)
+            return request.env['ir.http']._handle_exception(e)
         Module = request.env['ir.module.module'].sudo()
         apps = Module.search([('state', '=', 'installed'), ('application', '=', True)])
         l10n = Module.search([('state', '=', 'installed'), ('name', '=like', 'l10n_%')])
@@ -475,8 +475,8 @@ class Website(Home):
         :param enable: list of views' keys to enable
         :param disable: list of views' keys to disable
         """
-        self._get_customize_views(disable).write({'active': False})
-        self._get_customize_views(enable).write({'active': True})
+        self._get_customize_views(disable).filtered('active').write({'active': False})
+        self._get_customize_views(enable).filtered(lambda x: not x.active).write({'active': True})
 
     @http.route(['/website/theme_customize_bundle_reload'], type='json', auth='user', website=True)
     def theme_customize_bundle_reload(self):

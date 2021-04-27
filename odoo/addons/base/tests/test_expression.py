@@ -593,6 +593,17 @@ class TestExpression(SavepointCaseWithUserDemo):
         norm_domain = ['&', '&', '&'] + domain
         self.assertEqual(norm_domain, expression.normalize_domain(domain), "Non-normalized domains should be properly normalized")
 
+    def test_35_negating_thruty_leafs(self):
+        self.assertEqual(expression.distribute_not(['!', '!', expression.TRUE_LEAF]), [expression.TRUE_LEAF], "distribute_not applied wrongly")
+        self.assertEqual(expression.distribute_not(['!', '!', expression.FALSE_LEAF]), [expression.FALSE_LEAF], "distribute_not applied wrongly")
+        self.assertEqual(expression.distribute_not(['!', '!', '!', '!', expression.TRUE_LEAF]), [expression.TRUE_LEAF], "distribute_not applied wrongly")
+        self.assertEqual(expression.distribute_not(['!', '!', '!', '!', expression.FALSE_LEAF]), [expression.FALSE_LEAF], "distribute_not applied wrongly")
+
+        self.assertEqual(expression.distribute_not(['!', expression.TRUE_LEAF]), [expression.FALSE_LEAF], "distribute_not applied wrongly")
+        self.assertEqual(expression.distribute_not(['!', expression.FALSE_LEAF]), [expression.TRUE_LEAF], "distribute_not applied wrongly")
+        self.assertEqual(expression.distribute_not(['!', '!', '!', expression.TRUE_LEAF]), [expression.FALSE_LEAF], "distribute_not applied wrongly")
+        self.assertEqual(expression.distribute_not(['!', '!', '!', expression.FALSE_LEAF]), [expression.TRUE_LEAF], "distribute_not applied wrongly")
+
     def test_40_negating_long_expression(self):
         source = ['!', '&', ('user_id', '=', 4), ('partner_id', 'in', [1, 2])]
         expect = ['|', ('user_id', '!=', 4), ('partner_id', 'not in', [1, 2])]
@@ -782,6 +793,16 @@ class TestExpression(SavepointCaseWithUserDemo):
         # AND with OR with single FALSE_LEAF and normal leaf
         expr = expression.AND([expression.OR([false]), normal])
         self.assertEqual(expr, false)
+
+    def test_filtered_domain_order(self):
+        domain = [('name', 'ilike', 'a')]
+        countries = self.env['res.country'].search(domain)
+        self.assertGreater(len(countries), 1)
+        # same ids, same order
+        self.assertEqual(countries.filtered_domain(domain)._ids, countries._ids)
+        # again, trying the other way around
+        countries = countries.browse(reversed(countries._ids))
+        self.assertEqual(countries.filtered_domain(domain)._ids, countries._ids)
 
 
 class TestExpression2(TransactionCase):

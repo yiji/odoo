@@ -75,7 +75,7 @@ class AccountEdiFormat(models.Model):
         # Invoice lines.
         for i, line in enumerate(invoice.invoice_line_ids.filtered(lambda l: not l.display_type)):
             price_unit_with_discount = line.price_unit * (1 - (line.discount / 100.0))
-            taxes_res = line.tax_ids.compute_all(
+            taxes_res = line.tax_ids.with_context(force_sign=line.move_id._get_tax_force_sign()).compute_all(
                 price_unit_with_discount,
                 currency=line.currency_id,
                 quantity=line.quantity,
@@ -182,7 +182,8 @@ class AccountEdiFormat(models.Model):
         invoice.move_type = default_move_type
 
         # self could be a single record (editing) or be empty (new).
-        with Form(invoice.with_context(default_move_type=default_move_type)) as invoice_form:
+        with Form(invoice.with_context(default_move_type=default_move_type,
+                                       account_predictive_bills_disable_prediction=True)) as invoice_form:
             # Partner (first step to avoid warning 'Warning! You must first select a partner.').
             partner_type = invoice_form.journal_id.type == 'purchase' and 'SellerTradeParty' or 'BuyerTradeParty'
             elements = tree.xpath('//ram:' + partner_type + '/ram:SpecifiedTaxRegistration/ram:ID', namespaces=tree.nsmap)

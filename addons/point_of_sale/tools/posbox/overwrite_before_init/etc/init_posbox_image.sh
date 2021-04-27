@@ -20,6 +20,8 @@ echo "export LC_ALL=en_US.UTF-8" >> ~/.bashrc
 locale-gen
 source ~/.bashrc
 
+# upgrade firmware-brcm80211 broke access point on rpi4
+apt-mark hold firmware-brcm80211
 apt-get update && apt-get -y upgrade
 # Do not be too fast to upgrade to more recent firmware and kernel than 4.38
 # Firmware 4.44 seems to prevent the LED mechanism from working
@@ -66,7 +68,6 @@ PKGS_TO_INSTALL="
     python3-psutil \
     python3-psycopg2 \
     python3-pydot \
-    python3-pyparsing \
     python3-pypdf2 \
     python3-qrcode \
     python3-reportlab \
